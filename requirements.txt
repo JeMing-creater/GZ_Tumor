@@ -1,0 +1,16 @@
+timm==0.4.12
+objprint==0.2.3
+accelerate==0.18.0
+torch
+tensorboard
+easydict
+SimpleITK
+monai
+nibabel
+pyyaml
+opencv-python
+openpyxl
+scikit-learn
+scikit-image
+pandas
+matplotlib
