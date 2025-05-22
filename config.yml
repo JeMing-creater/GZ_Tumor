@@ -19,6 +19,7 @@ finetune:
     
   
 GCM_loader:
+  root: /mnt/GCM/
   train_ratio: 0.7
   val_ratio: 0.1
   test_ratio: 0.2
@@ -38,7 +39,6 @@ GCM_loader:
   # leapfrog: some data error can write in this list to remove from dataloader
   # leapfrog: ['0001902261', '0000439538','0002235469','0001308202']
   leapfrog: []
-  root: /root/.cache/huggingface/forget/datasets/MeiMRNew/
   # checkModels: ['A', 'ADC', 'T2_FS', 'V', 'DWI', 'P']
   checkModels: ['ADC','T2_FS']
   # model_scale: [[0, 6000], [0, 4500], [0, 4500]] # 对应模态的最小最大像素值，用于归一化
