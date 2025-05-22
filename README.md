@@ -3,7 +3,7 @@
 
 ## get project
 ```
-git clone https://github.com/JeMing-creater/ZTumorTrain.git
+git clone https://github.com/JeMing-creater/GZ_Tumor.git
 ```
 
 ## requirements
