@@ -11,7 +11,7 @@ def get_model(config):
                 num_classes=1         # 类别数，可根据任务修改
             )
         print('ResNet')
-    elif config.trainer.trainer.choose_model == 'Vit':
+    elif config.trainer.choose_model == 'Vit':
         model = ViT(
             in_channels=len(config.GCM_loader.checkModels),            # 输入通道数：医学图像通常为1
             img_size=(64, 128, 128),  # 输入图像大小 (D, H, W)
