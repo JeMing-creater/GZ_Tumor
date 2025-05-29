@@ -1,5 +1,5 @@
 trainer:
-  choose_model: ResNet
+  choose_model: ResNet  # [ResNet, Vit, TP_Mamba，FMUNETR_class, FMUNETR_seg]
   num_epochs: 300
   val_epochs: 10
   warmup: 2
@@ -7,15 +7,16 @@ trainer:
   resume: True
   lr: 0.001
   min_lr: 0.0000001
-  optimizer: adamw
-  weight_decay: 0.05
-  weight_decay_end: 0.04
+  optimizer: adam
+  weight_decay: 1e-5
+  betas: [0.9, 0.95]
 
 finetune:
   GCM:
-    # checkpoint: FMUNETR
+    checkpoint: ResNet
     # checkpoint: ViT
-    checkpoint: ResNet_50
+    # checkpoint: TP_Mamba
+    
     
   
 GCM_loader:
