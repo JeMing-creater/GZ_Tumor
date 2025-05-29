@@ -209,8 +209,8 @@ if __name__ == '__main__':
         monai.transforms.Activations(sigmoid=True), monai.transforms.AsDiscrete(threshold=0.5)
     ])
     optimizer = optim_factory.create_optimizer_v2(model, opt=config.trainer.optimizer,
-                                                  weight_decay=config.trainer.weight_decay,
-                                                  lr=config.trainer.lr, betas=(0.9, 0.95))
+                                                  weight_decay=float(config.trainer.weight_decay),
+                                                  lr=float(config.trainer.lr), betas=(config.trainer.betas[0], config.trainer.betas[1]))
     scheduler = LinearWarmupCosineAnnealingLR(optimizer, warmup_epochs=config.trainer.warmup,
                                               max_epochs=config.trainer.num_epochs)
     
