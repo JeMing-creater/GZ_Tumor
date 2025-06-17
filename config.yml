@@ -1,5 +1,5 @@
 trainer:
-  choose_model: ResNet  # [ResNet, Vit, TP_Mamba，FMUNETR_class, FMUNETR_seg]
+  choose_model: ResNet  # [FMUNETR_class, FMUNETR_seg, ResNet, Vit, TP_Mamba]
   num_epochs: 300
   val_epochs: 10
   warmup: 2
@@ -7,15 +7,18 @@ trainer:
   resume: True
   lr: 0.001
   min_lr: 0.0000001
-  optimizer: adam
-  weight_decay: 1e-5
+  optimizer: adamw
+  weight_decay: 0.05
   betas: [0.9, 0.95]
+
+
+
 
 finetune:
   GCM:
     checkpoint: ResNet
-    # checkpoint: ViT
-    # checkpoint: TP_Mamba
+  GCNC:
+    checkpoint: ResNet
     
     
   
@@ -46,7 +49,11 @@ GCM_loader:
   model_scale: [[0, 6000],[0, 4500]] # 对应模态的最小最大像素值，用于归一化
   target_size: [128, 128, 64]
 
+
+
+
 GCNC_loader:
+  root: /mnt/GCNC/
   train_ratio: 0.7
   val_ratio: 0.1
   test_ratio: 0.2
@@ -59,20 +66,27 @@ GCNC_loader:
   over_add: 10
   # leapfrog: some data error can write in this list to remove from dataloader
   # leapfrog: ['0001902261', '0000439538','0002235469','0001308202']
-  leapfrog: []
-  root: /root/.cache/huggingface/forget/datasets/GZNC/
+  leapfrog: ['H32444']
   # checkModels: ["T1WI","T1WI+C","T2WI"]
-  checkModels: ["T1WI", "T1WI+C", "T2WI"]
+  checkModels: ["T1", "T1+C", "T2"]
   model_scale: [[0, 6000], [0, 6000], [0, 6000]] # 对应模态的最小最大像素值，用于归一化
   target_size: [128, 128, 64]
+
+
 
 
 valer:
   dl_score_csv_path: score
 
 
+
 visualization:
+  target_layers: hidden_downsample
   heatmap:
-    choose_image: "0002693285"
-    target_layers: hidden_downsample
-    write_path: output_slices
+    GCM:
+      choose_image: "0002693285"
+      write_path: output_slices
+    GCNC:
+      choose_image: "123841"
+      write_path: output_slices
+

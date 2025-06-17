@@ -122,15 +122,8 @@ def compute_dl_score_for_example(model, config, post_trans, examples):
 
             logits = model(image_tensor)
             probs = logits
-            # probs = torch.sigmoid(logits).cpu().numpy().flatten()
-            # probs = torch.softmax(logits, dim=-1).cpu().numpy().flatten()
-            # dl_score[e] = logits.item()
             dl_s = probs.item()
             l = post_trans(logits).item()
-            # if dl_s >= 1:
-            #     dl_s = 1.0
-            # elif dl_s < 0.0001:
-            #     dl_s = 0.0001 
             dl_score[e] = dl_s
             lable_score[e] = l
             # gt_score[e] = 
