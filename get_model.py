@@ -1,7 +1,7 @@
 from monai.networks.nets import SwinUNETR
 from src.model.FMUNETR_class import FMUNETR as FMUNETR_class
 from src.model.FMUNETR_seg import FMUNETR as FMUNETR_seg
-from model.ResNet import resnet50
+from src.model.ResNet import resnet50
 from src.model.Vit import Vit as Vit
 from src.model.TP_Mamba import SAM_MS
 
