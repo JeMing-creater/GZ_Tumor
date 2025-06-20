@@ -203,7 +203,9 @@ def read_usedata(file_path):
                 continue
 
 
-def load_MR_dataset_images(root, use_data, use_models, use_data_dict={}):
+def load_MR_dataset_images(
+    root, use_data, use_models, use_data_dict={}, data_choose="GCM"
+):
     images_path = os.listdir(root)
     images_list = []
     images_lack_list = []
@@ -225,6 +227,8 @@ def load_MR_dataset_images(root, use_data, use_models, use_data_dict={}):
                 check_model = "T1+C"
             elif model == "T1+c":
                 check_model = "T1+C"
+            else:
+                check_model = model
 
             if check_model in use_models:
                 if not os.path.exists(root + "/" + path + "/" + model):
@@ -256,40 +260,74 @@ def load_MR_dataset_images(root, use_data, use_models, use_data_dict={}):
             print(f"{path} does not have image file or not enough modals. ")
             lack_model_flag = True
 
-        if lack_flag == False and lack_model_flag == False:
-            if use_data_dict != {}:
-                images_list.append(
-                    {
-                        "image": image,
-                        "label": label,
-                        "pdl1_label": use_data_dict[path]["PD-L1"],
-                        "m_label": use_data_dict[path]["M"],
-                    }
-                )
-            else:
-                images_list.append(
-                    {
-                        "image": image,
-                        "label": label,
-                    }
-                )
-        elif lack_model_flag == False:
-            if use_data_dict != {}:
-                images_lack_list.append(
-                    {
-                        "image": image,
-                        "label": label,
-                        "pdl1_label": use_data_dict[path]["PD-L1"],
-                        "m_label": use_data_dict[path]["M"],
-                    }
-                )
-            else:
-                images_lack_list.append(
-                    {
-                        "image": image,
-                        "label": label,
-                    }
-                )
+        if data_choose == "GCM":
+            if lack_flag == False and lack_model_flag == False:
+                if use_data_dict != {}:
+                    images_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                            "class_label": use_data_dict[path][0],
+                        }
+                    )
+                else:
+                    images_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                        }
+                    )
+            elif lack_model_flag == False:
+                if use_data_dict != {}:
+                    images_lack_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                            "class_label": use_data_dict[path][0],
+                        }
+                    )
+                else:
+                    images_lack_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                        }
+                    )
+        else:
+            if lack_flag == False and lack_model_flag == False:
+                if use_data_dict != {}:
+                    images_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                            "pdl1_label": use_data_dict[path]["PD-L1"],
+                            "m_label": use_data_dict[path]["M"],
+                        }
+                    )
+                else:
+                    images_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                        }
+                    )
+            elif lack_model_flag == False:
+                if use_data_dict != {}:
+                    images_lack_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                            "pdl1_label": use_data_dict[path]["PD-L1"],
+                            "m_label": use_data_dict[path]["M"],
+                        }
+                    )
+                else:
+                    images_lack_list.append(
+                        {
+                            "image": image,
+                            "label": label,
+                        }
+                    )
         # print(f'{path} example has been loaded')
 
     return images_list, images_lack_list
@@ -492,7 +530,14 @@ def get_Brats_transforms(
 
 class MultiModalityDataset(monai.data.Dataset):
     def __init__(
-        self, data, loadforms, transforms, over_label=False, over_add=0, use_class=True
+        self,
+        data,
+        loadforms,
+        transforms,
+        over_label=False,
+        over_add=0,
+        use_class=True,
+        data_choose="GCM",
     ):
         self.data = data
         self.transforms = transforms
@@ -500,6 +545,7 @@ class MultiModalityDataset(monai.data.Dataset):
         self.over_label = over_label
         self.over_add = over_add
         self.use_class = use_class
+        self.data_choose = data_choose
 
     def extract_and_resize(self, image, label, over_add=0):
         # 获取label中值为1的点的坐标
@@ -578,12 +624,21 @@ class MultiModalityDataset(monai.data.Dataset):
         result = self.transforms(result)
 
         if self.use_class == True:
-            return {
-                "image": result["image"],
-                "label": result["label"],
-                "pdl1_label": torch.tensor(item["pdl1_label"]).unsqueeze(0).long(),
-                "m_label": torch.tensor(item["m_label"]).unsqueeze(0).long(),
-            }
+            if self.data_choose == "GCM":
+                return {
+                    "image": result["image"],
+                    "label": result["label"],
+                    "class_label": torch.tensor(item["class_label"])
+                    .unsqueeze(0)
+                    .long(),
+                }
+            else:
+                return {
+                    "image": result["image"],
+                    "label": result["label"],
+                    "pdl1_label": torch.tensor(item["pdl1_label"]).unsqueeze(0).long(),
+                    "m_label": torch.tensor(item["m_label"]).unsqueeze(0).long(),
+                }
         else:
             return {"image": result["image"], "label": result["label"]}
 
@@ -737,16 +792,34 @@ def get_dataloader_GCM(
 
     # 加载MR数据
     train_data, _ = load_MR_dataset_images(
-        datapath, train_use_data, use_models, use_data_dict
+        datapath, train_use_data, use_models, use_data_dict, data_choose="GCM"
     )
     val_data, _ = load_MR_dataset_images(
-        datapath, val_use_data, use_models, use_data_dict
+        datapath, val_use_data, use_models, use_data_dict, data_choose="GCM"
     )
     test_data, _ = load_MR_dataset_images(
-        datapath, test_use_data, use_models, use_data_dict
+        datapath, test_use_data, use_models, use_data_dict, data_choose="GCM"
     )
 
+    # data, _ = load_MR_dataset_images(datapath, use_data, use_models, use_data_dict)
+
     load_transform, train_transform, val_transform = get_GCM_transforms(config)
+
+    # if config.GCM_loader.fix_example == True:
+    #     train_data, val_data, test_data = split_examples_to_data(data, config)
+    # else:
+    #     # shuffle data for objective verification
+    #     if config.GCM_loader.time_limit != True:
+    #         random.shuffle(data)
+    #         print('Random Loading!')
+
+    #     train_data, val_data, test_data = split_list(data, [config.GCM_loader.train_ratio, config.GCM_loader.val_ratio, config.GCM_loader.test_ratio])
+
+    #     # if not need test, can use fusion to fuse two data
+    #     if config.GCM_loader.fusion == True:
+    #         need_val_data = val_data + test_data
+    #         val_data = need_val_data
+    #         test_data = need_val_data
 
     train_example = check_example(train_data)
     val_example = check_example(val_data)
@@ -758,6 +831,7 @@ def get_dataloader_GCM(
         over_add=config.GCM_loader.over_add,
         loadforms=load_transform,
         transforms=train_transform,
+        data_choose="GCM",
     )
     val_dataset = MultiModalityDataset(
         data=val_data,
@@ -765,6 +839,7 @@ def get_dataloader_GCM(
         over_add=config.GCM_loader.over_add,
         loadforms=load_transform,
         transforms=val_transform,
+        data_choose="GCM",
     )
     test_dataset = MultiModalityDataset(
         data=test_data,
@@ -772,6 +847,7 @@ def get_dataloader_GCM(
         over_add=config.GCM_loader.over_add,
         loadforms=load_transform,
         transforms=val_transform,
+        data_choose="GCM",
     )
 
     train_loader = monai.data.DataLoader(
@@ -816,7 +892,7 @@ def get_dataloader_GCNC(
     use_data = [item for item in use_data_list if item not in remove_list]
 
     data, data_lack = load_MR_dataset_images(
-        datapath, use_data, use_models, content_dict
+        datapath, use_data, use_models, content_dict, data_choose="GCNC"
     )
     load_transform, train_transform, val_transform = get_GCNC_transforms(config)
 
@@ -862,6 +938,10 @@ def get_dataloader_GCNC(
     val_example = check_example(val_data)
     test_example = check_example(test_data)
 
+    # train_lack_example = check_example(train_data_lack)
+    # val_lack_example = check_example(val_data_lack)
+    # test_lack_example = check_example(test_data_lack)
+
     train_dataset = MultiModalityDataset(
         data=train_data,
         over_label=config.GCNC_loader.over_label,
@@ -869,6 +949,7 @@ def get_dataloader_GCNC(
         loadforms=load_transform,
         transforms=train_transform,
         use_class=True,
+        data_choose="GCNC",
     )
     val_dataset = MultiModalityDataset(
         data=val_data,
@@ -877,6 +958,7 @@ def get_dataloader_GCNC(
         loadforms=load_transform,
         transforms=val_transform,
         use_class=True,
+        data_choose="GCNC",
     )
     test_dataset = MultiModalityDataset(
         data=test_data,
@@ -885,7 +967,17 @@ def get_dataloader_GCNC(
         loadforms=load_transform,
         transforms=val_transform,
         use_class=True,
+        data_choose="GCNC",
     )
+
+    # train_lack_dataset = MultiModalityDataset(data=train_data_lack, over_label=config.GCNC_loader.over_label, over_add = config.GCNC_loader.over_add,loadforms = load_transform,
+    #                                      transforms=train_transform)
+    # val_lack_dataset   = MultiModalityDataset(data=val_data_lack, over_label=config.GCNC_loader.over_label, over_add = config.GCNC_loader.over_add,
+    #                                      loadforms = load_transform,
+    #                                      transforms=val_transform)
+    # test_lack_dataset   = MultiModalityDataset(data=test_data_lack, over_label=config.GCNC_loader.over_label, over_add = config.GCNC_loader.over_add,
+    #                                      loadforms = load_transform,
+    #                                      transforms=val_transform)
 
     train_loader = monai.data.DataLoader(
         train_dataset,
@@ -906,12 +998,50 @@ def get_dataloader_GCNC(
         shuffle=False,
     )
 
+    # train_lack_loader = monai.data.DataLoader(train_lack_dataset, num_workers=config.GCNC_loader.num_workers,
+    #                                      batch_size=config.trainer.batch_size, shuffle=True)
+    # val_lack_loader = monai.data.DataLoader(val_lack_dataset, num_workers=config.GCNC_loader.num_workers,
+    #                                    batch_size=config.trainer.batch_size, shuffle=False)
+    # test_lack_loader = monai.data.DataLoader(test_lack_dataset, num_workers=config.GCNC_loader.num_workers,
+    #                                    batch_size=config.trainer.batch_size, shuffle=False)
+
     return (
         train_loader,
         val_loader,
         test_loader,
         (train_example, val_example, test_example),
     )
+
+
+def get_dataloader_BraTS(
+    config: EasyDict,
+) -> Tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+    train_images = load_brats2021_dataset_images(config.BraTS_loader.dataPath)
+    train_transform, val_transform = get_Brats_transforms(config)
+    train_dataset = monai.data.Dataset(
+        data=train_images[: int(len(train_images) * config.BraTS_loader.train_ratio)],
+        transform=train_transform,
+    )
+    val_dataset = monai.data.Dataset(
+        data=train_images[int(len(train_images) * config.BraTS_loader.train_ratio) :],
+        transform=val_transform,
+    )
+
+    train_loader = monai.data.DataLoader(
+        train_dataset,
+        num_workers=config.BraTS_loader.num_workers,
+        batch_size=config.trainer.batch_size,
+        shuffle=True,
+    )
+
+    val_loader = monai.data.DataLoader(
+        val_dataset,
+        num_workers=config.BraTS_loader.num_workers,
+        batch_size=config.trainer.batch_size,
+        shuffle=False,
+    )
+
+    return train_loader, val_loader
 
 
 if __name__ == "__main__":
