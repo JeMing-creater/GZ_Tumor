@@ -1052,15 +1052,15 @@ if __name__ == "__main__":
         )
     )
 
-    # train_loader, val_loader, test_loader, _ = get_dataloader_GCM(config)
-    train_loader, val_loader, test_loader, _ = get_dataloader_GCNC(config)
+    train_loader, val_loader, test_loader, _ = get_dataloader_GCM(config)
+    # train_loader, val_loader, test_loader, _ = get_dataloader_GCNC(config)
 
     for i, batch in enumerate(train_loader):
         try:
             print(batch["image"].shape)
             print(batch["label"].shape)
-            print(batch["pdl1_label"].shape)
-            print(batch["m_label"].shape)
+            print(batch["class_label"].shape)
+            # print(batch["m_label"].shape)
         except Exception as e:
             print(f"Error occurred while loading batch {i}: {e}")
             continue
@@ -1069,8 +1069,8 @@ if __name__ == "__main__":
         try:
             print(batch["image"].shape)
             print(batch["label"].shape)
-            print(batch["pdl1_label"].shape)
-            print(batch["m_label"].shape)
+            print(batch["class_label"].shape)
+            # print(batch["m_label"].shape)
         except Exception as e:
             print(f"Error occurred while loading batch {i}: {e}")
             continue
@@ -1079,8 +1079,8 @@ if __name__ == "__main__":
         try:
             print(batch["image"].shape)
             print(batch["label"].shape)
-            print(batch["pdl1_label"].shape)
-            print(batch["m_label"].shape)
+            print(batch["class_label"].shape)
+            # print(batch["m_label"].shape)
         except Exception as e:
             print(f"Error occurred while loading batch {i}: {e}")
             continue
