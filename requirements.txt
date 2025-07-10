@@ -1,6 +1,6 @@
 timm==0.9.8
 objprint==0.2.3
-accelerate==1.7.0
+accelerate==0.18.0
 torch
 tensorboard
 easydict
