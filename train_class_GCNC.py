@@ -1,4 +1,7 @@
+from math import e
 import os
+
+# os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 import sys
 from datetime import datetime
 from typing import Dict
@@ -6,6 +9,8 @@ from typing import Dict
 import monai
 import torch
 import yaml
+from tqdm import tqdm
+import torch.nn as nn
 from dataclasses import dataclass, field
 from accelerate import Accelerator
 from easydict import EasyDict
@@ -19,13 +24,23 @@ from src.loader import get_dataloader_GCNC as get_dataloader
 from src.optimizer import LinearWarmupCosineAnnealingLR
 from src.utils import (
     Logger,
-    resume_train_state,
     write_example,
+    resume_train_state,
+    split_metrics,
     load_model_dict,
-    freeze_encoder_class,
+    freeze_seg_decoder,
+    reload_pre_train_model,
+)
+from src.eval import (
+    calculate_f1_score,
+    specificity,
+    quadratic_weighted_kappa,
+    top_k_accuracy,
+    calculate_metrics,
+    accumulate_metrics,
+    compute_final_metrics,
 )
 
-# from src.model.HWAUNETR_seg import HWAUNETR as FMUNETR_seg
 from get_model import get_model
 
 
@@ -44,23 +59,33 @@ def train_one_epoch(
 ):
     # 训练
     model.train()
-    if config.trainer.choose_model == "HSL_Net":
-        freeze_encoder_class(model)
-    for i, image_batch in enumerate(train_loader):
+    freeze_seg_decoder(model)
+    accelerator.print(f"Training...", flush=True)
+    loop = tqdm(enumerate(train_loader), total=len(train_loader))
+    # for i, image_batch in enumerate(train_loader):
+    for i, image_batch in loop:
+        # for i, image_batch in enumerate(train_loader):
         if config.trainer.choose_model == "HSL_Net":
-            _, logits = model(image_batch["image"])
+            logits, _ = model(image_batch["image"])
         else:
             logits = model(image_batch["image"])
         total_loss = 0
-        log = ""
+        logits_loss = logits
+        labels = image_batch["m_label"]
         for name in loss_functions:
             alpth = 1
-            loss = loss_functions[name](logits, image_batch["label"])
+            loss = loss_functions[name](logits_loss, labels.float())
             accelerator.log({"Train/" + name: float(loss)}, step=step)
             total_loss += alpth * loss
-        val_outputs = post_trans(logits)
+
         for metric_name in metrics:
-            metrics[metric_name](y_pred=val_outputs, y=image_batch["label"])
+            y_pred = post_trans(logits)
+            y = labels
+            if metric_name == "miou_metric":
+                y_pred = y_pred.unsqueeze(2)
+                y = y.unsqueeze(2)
+            metrics[metric_name](y_pred=y_pred, y=y)
+
         accelerator.backward(total_loss)
         optimizer.step()
         optimizer.zero_grad()
@@ -73,27 +98,40 @@ def train_one_epoch(
             },
             step=step,
         )
-        accelerator.print(
-            f"Epoch [{epoch+1}/{config.trainer.num_epochs}][{i + 1}/{len(train_loader)}] Training Loss:{total_loss}",
-            flush=True,
-        )
+        # accelerator.print(
+        #     f'Epoch [{epoch+1}/{config.trainer.num_epochs}][{i + 1}/{len(train_loader)}] Training Loss:{total_loss}',
+        #     flush=True
+        #     )
+        # 更新信息
+        loop.set_description(f"Epoch [{epoch+1}/{config.trainer.num_epochs}]")
+        loop.set_postfix(loss=total_loss)
         step += 1
     scheduler.step(epoch)
+
     metric = {}
     for metric_name in metrics:
         batch_acc = metrics[metric_name].aggregate()[0].to(accelerator.device)
+
         if accelerator.num_processes > 1:
             batch_acc = accelerator.reduce(batch_acc) / accelerator.num_processes
+
+        # give every single task metric
+        metrics[metric_name].reset()
         metric.update(
             {
-                f"Train/mean {metric_name}": float(batch_acc.mean()),
-                f"Train/Object1 {metric_name}": float(batch_acc[0]),
-                f"Train/Object2 {metric_name}": float(batch_acc[1]),
-                f"Train/Object3 {metric_name}": float(batch_acc[2]),
+                f"Train/{metric_name}": float(batch_acc.mean()),
             }
         )
+    for metric_name in metrics:
+        all_data = []
+        for key in metric.keys():
+            if metric_name in key:
+                all_data.append(metric[key])
+        me_data = sum(all_data) / len(all_data)
+        metric.update({f"Train/{metric_name}": float(me_data)})
+
     accelerator.log(metric, step=epoch)
-    return step
+    return metric, step
 
 
 @torch.no_grad()
@@ -110,63 +148,73 @@ def val_one_epoch(
 ):
     # 验证
     model.eval()
-    dice_acc = 0
-    dice_class = []
-    hd95_acc = 0
-    hd95_class = []
-    for i, image_batch in enumerate(val_loader):
-        if config.trainer.choose_model == "HSL_Net":
-            _, logits = model(image_batch["image"])
-        else:
-            logits = model(image_batch["image"])
-        # logits = inference(image_batch["image"], model)
-        val_outputs = post_trans(logits)
-        for metric_name in metrics:
-            metrics[metric_name](y_pred=val_outputs, y=image_batch["label"])
-        accelerator.print(
-            f"[{i + 1}/{len(val_loader)}] Validation Loading...", flush=True
-        )
-
-        step += 1
-    metric = {}
     if test:
         flag = "Test"
+        accelerator.print(f"Testing...", flush=True)
     else:
         flag = "Val"
+        accelerator.print(f"Valing...", flush=True)
+    loop = tqdm(enumerate(val_loader), total=len(val_loader))
+    # for i, image_batch in enumerate(val_loader):
+    for i, image_batch in loop:
+        # logits = inference(model, image_batch['image'])
+        if config.trainer.choose_model == "HSL_Net":
+            logits, _ = model(image_batch["image"])
+        else:
+            logits = model(image_batch["image"])
+        log = ""
+        total_loss = 0
+
+        logits_loss = logits
+        labels_loss = image_batch["m_label"]
+
+        for name in loss_functions:
+            loss = loss_functions[name](logits_loss, labels_loss.float())
+            accelerator.log({f"{flag}/" + name: float(loss)}, step=step)
+            log += f"{name} {float(loss):1.5f} "
+            total_loss += loss
+
+        accelerator.log(
+            {
+                f"{flag}/Total Loss": float(total_loss),
+            },
+            step=step,
+        )
+
+        for metric_name in metrics:
+            y_pred = post_trans(logits)
+            y = labels_loss
+            if metric_name == "miou_metric":
+                y_pred = y_pred.unsqueeze(2)
+                y = y.unsqueeze(2)
+            metrics[metric_name](y_pred=y_pred, y=y)
+
+        # accelerator.print(
+        #     f'[{i + 1}/{len(val_loader)}] {flag} Validation Loading...',
+        #     flush=True)
+        loop.set_description(f"Epoch [{epoch+1}/{config.trainer.num_epochs}]")
+        loop.set_postfix(loss=total_loss)
+        step += 1
+    metric = {}
+
     for metric_name in metrics:
+        # for channel in range(channels):
         batch_acc = metrics[metric_name].aggregate()[0].to(accelerator.device)
 
         if accelerator.num_processes > 1:
             batch_acc = accelerator.reduce(batch_acc) / accelerator.num_processes
+
+        # give every single task metric
         metrics[metric_name].reset()
-        if metric_name == "dice_metric":
-            metric.update(
-                {
-                    f"{flag}/mean {metric_name}": float(batch_acc.mean()),
-                    f"{flag}/Object1 {metric_name}": float(batch_acc[0]),
-                    f"{flag}/Object2 {metric_name}": float(batch_acc[1]),
-                    f"{flag}/Object3 {metric_name}": float(batch_acc[2]),
-                }
-            )
-            dice_acc = torch.Tensor([metric[f"{flag}/mean dice_metric"]]).to(
-                accelerator.device
-            )
-            dice_class = batch_acc
-        else:
-            metric.update(
-                {
-                    f"{flag}/mean {metric_name}": float(batch_acc.mean()),
-                    f"{flag}/Object1 {metric_name}": float(batch_acc[0]),
-                    f"{flag}/Object2 {metric_name}": float(batch_acc[1]),
-                    f"{flag}/Object3 {metric_name}": float(batch_acc[2]),
-                }
-            )
-            hd95_acc = torch.Tensor([metric[f"{flag}/mean hd95_metric"]]).to(
-                accelerator.device
-            )
-            hd95_class = batch_acc
+        # task_num = channel + 1
+        metric.update(
+            {
+                f"{flag}/{metric_name}": float(batch_acc.mean()),
+            }
+        )
+
     accelerator.log(metric, step=epoch)
-    return dice_acc, dice_class, hd95_acc, hd95_class, step
+    return metric, step
 
 
 if __name__ == "__main__":
@@ -174,7 +222,6 @@ if __name__ == "__main__":
         yaml.load(open("config.yml", "r", encoding="utf-8"), Loader=yaml.FullLoader)
     )
     utils.same_seeds(50)
-
     if config.finetune.GCNC.checkpoint != "None":
         checkpoint_name = config.finetune.GCNC.checkpoint
     else:
@@ -195,21 +242,21 @@ if __name__ == "__main__":
         .replace(":", "_")
         .replace(".", "_")
     )
-
     accelerator = Accelerator(
         kwargs_handlers=[DistributedDataParallelKwargs(find_unused_parameters=True)],
         cpu=False,
         log_with=["tensorboard"],
         project_dir=logging_dir,
     )
-
     Logger(logging_dir if accelerator.is_local_main_process else None)
-
     accelerator.init_trackers(os.path.split(__file__)[-1].split(".")[0])
     accelerator.print(objstr(config))
 
     accelerator.print("load model...")
     model = get_model(config)
+
+    if config.trainer.choose_model == "HSL_Net":
+        reload_pre_train_model(model, accelerator, "HSL_Net_class_multimodals_v1")
 
     accelerator.print("load dataset...")
     train_loader, val_loader, test_loader, example = get_dataloader(config)
@@ -227,24 +274,25 @@ if __name__ == "__main__":
 
     loss_functions = {
         "focal_loss": monai.losses.FocalLoss(to_onehot_y=False),
-        "dice_loss": monai.losses.DiceLoss(
-            smooth_nr=0, smooth_dr=1e-5, to_onehot_y=False, sigmoid=True
-        ),
+        "bce_loss": nn.BCEWithLogitsLoss().to(accelerator.device),
     }
 
     metrics = {
-        "dice_metric": monai.metrics.DiceMetric(
-            include_background=True,
-            reduction=monai.utils.MetricReduction.MEAN_BATCH,
-            get_not_nans=True,
+        "accuracy": monai.metrics.ConfusionMatrixMetric(
+            include_background=False, metric_name="accuracy"
         ),
-        "hd95_metric": monai.metrics.HausdorffDistanceMetric(
-            percentile=95,
-            include_background=True,
-            reduction=monai.utils.MetricReduction.MEAN_BATCH,
-            get_not_nans=True,
+        "f1": monai.metrics.ConfusionMatrixMetric(
+            include_background=False, metric_name="f1 score"
         ),
+        "specificity": monai.metrics.ConfusionMatrixMetric(
+            include_background=False, metric_name="specificity"
+        ),
+        "recall": monai.metrics.ConfusionMatrixMetric(
+            include_background=False, metric_name="recall"
+        ),
+        "miou_metric": monai.metrics.MeanIoU(include_background=False),
     }
+
     post_trans = monai.transforms.Compose(
         [
             monai.transforms.Activations(sigmoid=True),
@@ -271,21 +319,12 @@ if __name__ == "__main__":
     train_step = 0
     best_eopch = -1
     val_step = 0
-    best_score = torch.tensor(0)
-    best_hd95 = torch.tensor(1000)
-    best_test_score = torch.tensor(0)
-    best_test_hd95 = torch.tensor(1000)
-    starting_epoch = 0
-    best_metrics = []
-    best_hd95_metrics = []
-    best_test_metrics = []
-    best_test_hd95_metrics = []
+    best_accuracy = torch.tensor(0)
+    best_metrics = {}
+    best_test_accuracy = torch.tensor(0)
+    best_test_metrics = {}
 
-    model, optimizer, scheduler, train_loader, val_loader, test_loader = (
-        accelerator.prepare(
-            model, optimizer, scheduler, train_loader, val_loader, test_loader
-        )
-    )
+    starting_epoch = 0
 
     if config.trainer.resume:
         (
@@ -294,14 +333,10 @@ if __name__ == "__main__":
             scheduler,
             starting_epoch,
             train_step,
-            best_score,
-            best_test_score,
+            best_accuracy,
+            best_test_accuracy,
             best_metrics,
             best_test_metrics,
-            best_hd95,
-            best_test_hd95,
-            best_hd95_metrics,
-            best_test_hd95_metrics,
         ) = utils.resume_train_state(
             model,
             "{}".format(checkpoint_name),
@@ -309,13 +344,21 @@ if __name__ == "__main__":
             scheduler,
             train_loader,
             accelerator,
+            seg=False,
         )
         val_step = train_step
 
-    best_score = torch.Tensor([best_score]).to(accelerator.device)
-    best_hd95 = torch.Tensor([best_hd95]).to(accelerator.device)
+    model, optimizer, scheduler, train_loader, val_loader, test_loader = (
+        accelerator.prepare(
+            model, optimizer, scheduler, train_loader, val_loader, test_loader
+        )
+    )
+
+    best_accuracy = torch.Tensor([best_accuracy]).to(accelerator.device)
+    best_test_accuracy = torch.Tensor([best_test_accuracy]).to(accelerator.device)
+
     for epoch in range(starting_epoch, config.trainer.num_epochs):
-        train_step = train_one_epoch(
+        train_metric, train_step = train_one_epoch(
             model,
             loss_functions,
             train_loader,
@@ -328,7 +371,8 @@ if __name__ == "__main__":
             train_step,
             config,
         )
-        dice_acc, dice_class, hd95_acc, hd95_class, val_step = val_one_epoch(
+
+        final_metrics, val_step = val_one_epoch(
             model,
             inference,
             val_loader,
@@ -337,26 +381,21 @@ if __name__ == "__main__":
             post_trans,
             accelerator,
             config,
-            test=False,
+            False,
         )
+
+        val_top = final_metrics["Val/accuracy"]
+
         # 保存模型
-        if dice_acc > best_score:
+        if val_top > best_accuracy:
             accelerator.save_state(
                 output_dir=f"{os.getcwd()}/model_store/{checkpoint_name}/best"
             )
-            best_score = dice_acc
-            best_metrics = dice_class
-            best_hd95 = hd95_acc
-
-            if config.GCNC_loader.fusion != True:
-                # 记录最优test acc
-                (
-                    best_test_score,
-                    best_test_metrics,
-                    best_test_hd95,
-                    best_test_hd95_metrics,
-                    _,
-                ) = val_one_epoch(
+            best_accuracy = final_metrics["Val/accuracy"]
+            best_metrics = final_metrics
+            # 记录最优test acc
+            if config.GCNC_loader.fusion == False:
+                final_metrics, _ = val_one_epoch(
                     model,
                     inference,
                     test_loader,
@@ -367,16 +406,16 @@ if __name__ == "__main__":
                     config,
                     test=True,
                 )
+                best_test_accuracy = final_metrics["Test/accuracy"]
+                best_test_metrics = final_metrics
             else:
-                (
-                    best_test_score,
-                    best_test_metrics,
-                    best_test_hd95,
-                    best_test_hd95_metrics,
-                ) = (dice_acc, dice_class, hd95_acc, hd95_class)
+                final_metrics = final_metrics
+
+                best_test_accuracy = final_metrics["Val/accuracy"]
+                best_test_metrics = final_metrics
 
         accelerator.print(
-            f"Epoch [{epoch+1}/{config.trainer.num_epochs}] dice acc: {dice_acc} hd95_acc: {hd95_acc} best acc: {best_score}, best hd95: {best_hd95}, best test acc: {best_test_score}, best test hd95: {best_test_hd95}"
+            f'Epoch [{epoch+1}/{config.trainer.num_epochs}] now train acc: {train_metric["Train/accuracy"]}, now val acc: {val_top}, best acc: {best_accuracy}, best test acc: {best_test_accuracy}'
         )
 
         accelerator.print("Cheakpoint...")
@@ -386,19 +425,13 @@ if __name__ == "__main__":
         torch.save(
             {
                 "epoch": epoch,
-                "best_score": best_score,
-                "best_test_score": best_test_score,
+                "best_accuracy": best_accuracy,
                 "best_metrics": best_metrics,
+                "best_test_accuracy": best_test_accuracy,
                 "best_test_metrics": best_test_metrics,
-                "best_hd95": best_hd95,
-                "best_test_hd95": best_test_hd95,
-                "best_hd95_metrics": best_hd95_metrics,
-                "best_test_hd95_metrics": best_test_hd95_metrics,
             },
             f"{os.getcwd()}/model_store/{checkpoint_name}/checkpoint/epoch.pth.tar",
         )
 
-    accelerator.print(f"dice score: {best_test_score}")
-    accelerator.print(f"dice metrics : {best_test_metrics}")
-    accelerator.print(f"hd95 score: {best_test_hd95}")
-    accelerator.print(f"hd95 metrics : {best_test_hd95_metrics}")
+    accelerator.print(f"best test accuracy: {best_test_accuracy}")
+    accelerator.print(f"best metrics: {best_test_metrics}")

@@ -148,7 +148,7 @@ def read_csv_for_GCM(config):
 
 def read_csv_for_GCNC(config):
 
-    csv_path1 = config.GCNC_loader.root + "/" + "ALL.xlsx"
+    csv_path1 = config.GCNC_loader.root + "/" + "NPC.xlsx"
 
     # 定义dtype转换，将第四列（索引为3）读作str
     dtype_converters = {3: str}
@@ -161,32 +161,42 @@ def read_csv_for_GCNC(config):
     # 遍历DataFrame的每一行，从第二行开始
     for index, row in df.iterrows():
 
-        key = row["病理号"]
+        key = str(row["ID"])
         # TODO: 此处只做高低表达分类记录。后续数据补全可以添加阴阳性分类
         # 如果指标缺失，则跳过读取
-        if isinstance(row["PD-L1"], (int, float)) != True:
+        if isinstance(row["label"], (int, float)) != True:
+            print(f"{key} miss label")
             continue
 
-        # TODO: xlxs文件内部内容修改
-        if row["M分期"] == "x":
-            row["M分期"] = 1
-        elif row["M分期"] == 3:
-            row["M分期"] = 0
+        # try:
+        #     row["PD-L1"] = float(row["PD-L1"])
+        # except:
+        #     try:
+        #         if "未做" in row["PD-L1"]:
+        #             print(f"{key} miss PD-L1")
+        #             continue
+        #         elif "＜1" in row["PD-L1"]:
+        #             row["PD-L1"] = 0
+        #     except:
+        #         print(f"{key} miss PD-L1")
+        #         continue
 
-        if isinstance(row["M分期"], (int, float)) != True:
-            continue
+        # label_dict = {"PD-L1": -1, "label": -1, "center": -1}
+        label_dict = {"label": -1, "center": -1}
 
-        label_dict = {"PD-L1": -1, "M": -1}
+        # if row["PD-L1"] > 20:
+        #     label_dict["PD-L1"] = 1
+        # else:
+        #     label_dict["PD-L1"] = 0
 
-        if row["PD-L1"] > 20:
-            label_dict["PD-L1"] = 1
-        else:
-            label_dict["PD-L1"] = 0
+        label_dict["M"] = row["label"]
 
-        label_dict["M"] = row["M分期"]
+        label_dict["center"] = row["中心"]
 
-        if label_dict["PD-L1"] != -1 and label_dict["M"] != -1:
+        if label_dict["M"] != -1:
             content_dict[key] = label_dict
+        else:
+            print(f"{key} miss label")
     return content_dict
 
 
@@ -211,9 +221,11 @@ def load_MR_dataset_images(
     images_lack_list = []
 
     for path in use_data:
+        path = str(path)
         if path in images_path:
             models = os.listdir(root + "/" + path + "/")
         else:
+            print(f"{path} is not in {root}. ")
             continue
         lack_flag = False
         lack_model_flag = False
@@ -300,8 +312,9 @@ def load_MR_dataset_images(
                         {
                             "image": image,
                             "label": label,
-                            "pdl1_label": use_data_dict[path]["PD-L1"],
+                            # "pdl1_label": use_data_dict[path]["PD-L1"],
                             "m_label": use_data_dict[path]["M"],
+                            "center": use_data_dict[path]["center"],
                         }
                     )
                 else:
@@ -317,8 +330,9 @@ def load_MR_dataset_images(
                         {
                             "image": image,
                             "label": label,
-                            "pdl1_label": use_data_dict[path]["PD-L1"],
+                            # "pdl1_label": use_data_dict[path]["PD-L1"],
                             "m_label": use_data_dict[path]["M"],
+                            "center": use_data_dict[path]["center"],
                         }
                     )
                 else:
@@ -416,6 +430,7 @@ def get_GCNC_transforms(
                         spatial_size=config.GCNC_loader.target_size,
                         mode=("trilinear", "nearest-exact"),
                     ),
+                    Orientationd(keys=["image", "label"], axcodes="RAS"),
                     ScaleIntensityRanged(
                         keys=["image"],  # 对图像应用变换
                         a_min=model_scale[0],  # 输入图像的最小强度值
@@ -625,22 +640,34 @@ class MultiModalityDataset(monai.data.Dataset):
 
         if self.use_class == True:
             if self.data_choose == "GCM":
+                class_label = item["class_label"]
+                if class_label != 0:
+                    class_label = 1
                 return {
                     "image": result["image"],
                     "label": result["label"],
-                    "class_label": torch.tensor(item["class_label"])
-                    .unsqueeze(0)
-                    .long(),
+                    "class_label": torch.tensor(class_label).unsqueeze(0).long(),
                 }
             else:
+                # pdl1_label = item["pdl1_label"]
+                # if pdl1_label != 0:
+                #     pdl1_label = 1
+                m_label = item["m_label"]
+                if m_label != 0:
+                    m_label = 1
                 return {
                     "image": result["image"],
                     "label": result["label"],
-                    "pdl1_label": torch.tensor(item["pdl1_label"]).unsqueeze(0).long(),
-                    "m_label": torch.tensor(item["m_label"]).unsqueeze(0).long(),
+                    # "pdl1_label": torch.tensor(pdl1_label).unsqueeze(0).long(),
+                    "m_label": torch.tensor(m_label).unsqueeze(0).long(),
+                    "center": torch.tensor(item["center"]).unsqueeze(0).long(),
                 }
         else:
-            return {"image": result["image"], "label": result["label"]}
+            return {
+                "image": result["image"],
+                "label": result["label"],
+                "center": result["center"],
+            }
 
 
 def split_list(data, ratios):
@@ -897,14 +924,9 @@ def get_dataloader_GCNC(
     load_transform, train_transform, val_transform = get_GCNC_transforms(config)
 
     if config.GCNC_loader.fix_example == True:
-        (
-            train_data,
-            val_data,
-            test_data,
-            train_data_lack,
-            val_data_lack,
-            test_data_lack,
-        ) = split_examples_to_data(data, config, lack_flag=True, loding=True)
+        (train_data, val_data, test_data) = split_examples_to_data(
+            data, config, lack_flag=False, loding=True
+        )
     else:
         random.shuffle(data)
         print("Random Loading!")
@@ -916,23 +938,11 @@ def get_dataloader_GCNC(
                 config.GCNC_loader.test_ratio,
             ],
         )
-        train_data_lack, val_data_lack, test_data_lack = split_list(
-            data_lack,
-            [
-                config.GCNC_loader.train_ratio,
-                config.GCNC_loader.val_ratio,
-                config.GCNC_loader.test_ratio,
-            ],
-        )
 
         if config.GCNC_loader.fusion == True:
             need_val_data = val_data + test_data
             val_data = need_val_data
             test_data = need_val_data
-
-            need_val_data = val_data_lack + test_data_lack
-            val_data_lack = need_val_data
-            test_data_lack = need_val_data
 
     train_example = check_example(train_data)
     val_example = check_example(val_data)
@@ -970,15 +980,6 @@ def get_dataloader_GCNC(
         data_choose="GCNC",
     )
 
-    # train_lack_dataset = MultiModalityDataset(data=train_data_lack, over_label=config.GCNC_loader.over_label, over_add = config.GCNC_loader.over_add,loadforms = load_transform,
-    #                                      transforms=train_transform)
-    # val_lack_dataset   = MultiModalityDataset(data=val_data_lack, over_label=config.GCNC_loader.over_label, over_add = config.GCNC_loader.over_add,
-    #                                      loadforms = load_transform,
-    #                                      transforms=val_transform)
-    # test_lack_dataset   = MultiModalityDataset(data=test_data_lack, over_label=config.GCNC_loader.over_label, over_add = config.GCNC_loader.over_add,
-    #                                      loadforms = load_transform,
-    #                                      transforms=val_transform)
-
     train_loader = monai.data.DataLoader(
         train_dataset,
         num_workers=config.GCNC_loader.num_workers,
@@ -997,13 +998,6 @@ def get_dataloader_GCNC(
         batch_size=config.trainer.batch_size,
         shuffle=False,
     )
-
-    # train_lack_loader = monai.data.DataLoader(train_lack_dataset, num_workers=config.GCNC_loader.num_workers,
-    #                                      batch_size=config.trainer.batch_size, shuffle=True)
-    # val_lack_loader = monai.data.DataLoader(val_lack_dataset, num_workers=config.GCNC_loader.num_workers,
-    #                                    batch_size=config.trainer.batch_size, shuffle=False)
-    # test_lack_loader = monai.data.DataLoader(test_lack_dataset, num_workers=config.GCNC_loader.num_workers,
-    #                                    batch_size=config.trainer.batch_size, shuffle=False)
 
     return (
         train_loader,
@@ -1047,7 +1041,7 @@ def get_dataloader_BraTS(
 if __name__ == "__main__":
     config = EasyDict(
         yaml.load(
-            open("/workspace/Jeming/ZT/config.yml", "r", encoding="utf-8"),
+            open("/workspace/ZT/config.yml", "r", encoding="utf-8"),
             Loader=yaml.FullLoader,
         )
     )
@@ -1055,32 +1049,32 @@ if __name__ == "__main__":
     train_loader, val_loader, test_loader, _ = get_dataloader_GCM(config)
     # train_loader, val_loader, test_loader, _ = get_dataloader_GCNC(config)
 
+    conut = 0
+    f_count = 0
+
+    pd_l1_count = 0
+    pd_l1_f_count = 0
+
     for i, batch in enumerate(train_loader):
         try:
-            print(batch["image"].shape)
-            print(batch["label"].shape)
-            print(batch["class_label"].shape)
-            # print(batch["m_label"].shape)
+            print("image")
+            print(batch["image"])
+            print("m_label: ")
+            print(batch["m_label"])
+            print("center: ")
+            print(batch["center"])
         except Exception as e:
             print(f"Error occurred while loading batch {i}: {e}")
             continue
 
     for i, batch in enumerate(val_loader):
         try:
-            print(batch["image"].shape)
-            print(batch["label"].shape)
-            print(batch["class_label"].shape)
-            # print(batch["m_label"].shape)
-        except Exception as e:
-            print(f"Error occurred while loading batch {i}: {e}")
-            continue
-
-    for i, batch in enumerate(test_loader):
-        try:
-            print(batch["image"].shape)
-            print(batch["label"].shape)
-            print(batch["class_label"].shape)
-            # print(batch["m_label"].shape)
+            print("image")
+            print(batch["image"])
+            print("m_label: ")
+            print(batch["m_label"])
+            print("center: ")
+            print(batch["center"])
         except Exception as e:
             print(f"Error occurred while loading batch {i}: {e}")
             continue
