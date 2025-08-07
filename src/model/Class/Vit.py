@@ -183,7 +183,6 @@ class Encoder(nn.Module):
         x = self.dropout(x)
         return x, hidden_states_out, (B, C, W, H, Z)
 
-
 class TransposedConvLayer(nn.Module):
     def __init__(self, dim_in, dim_out, r):
         super(TransposedConvLayer, self).__init__()
@@ -235,8 +234,10 @@ class Decoder(nn.Module):
         # 添加全局平均池化层
         self.global_avg_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
         self.task_head = nn.Sequential(
-            nn.Linear(24, 64), nn.ReLU(), nn.Linear(64, 1)  # 全连接层  # 输出层
-        )
+                nn.Linear(24, 64),  # 全连接层
+                nn.ReLU(),
+                nn.Linear(64, 1)  # 输出层
+            )
 
     def forward(self, x, hidden_states_out, x_shape):
         B, C, W, H, Z = x_shape
@@ -260,7 +261,6 @@ class Decoder(nn.Module):
 
         # x = self.SegHead(x)
         return x
-
 
 class Vit(nn.Module):
     def __init__(

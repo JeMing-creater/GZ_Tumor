@@ -1,16 +1,19 @@
 trainer:
-  choose_model: ResNet  # [FMUNETR_class, FMUNETR_seg, ResNet, Vit, TP_Mamba]
+  choose_model: ResNet   # Class: [HSL_Net, TFM_UNET_class, ResNet, Vit, TP_Mamba] Seg: [HSL_Net, TFM_UNET_seg, SwinUNETR]
+  task: Classification   # [Classification, Segmentation]
+  choose_dataset: GCNC   # [GCM, GCNC, BraTS]
   num_epochs: 300
-  val_epochs: 10
   warmup: 2
-  batch_size: 4
+  batch_size: 2
   resume: True
-  lr: 0.001
+  # lr: 0.001
+  lr: 0.0001
   min_lr: 0.0000001
   optimizer: adamw
+  # optimizer: adam
   weight_decay: 0.05
+  # weight_decay: 1e-5
   betas: [0.9, 0.95]
-
 
 
 

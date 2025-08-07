@@ -6,30 +6,27 @@ import math
 from functools import partial
 
 __all__ = [
-    "ResNet",
-    "resnet10",
-    "resnet18",
-    "resnet34",
-    "resnet50",
-    "resnet101",
-    "resnet152",
-    "resnet200",
-    "get_fine_tuning_parameters",
+    'ResNet', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
+    'resnet152', 'resnet200', 'get_fine_tuning_parameters'
 ]
 
 
 def conv3x3x3(in_planes, out_planes, stride=1):
     # 3x3x3 convolution with padding
     return nn.Conv3d(
-        in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
-    )
+        in_planes,
+        out_planes,
+        kernel_size=3,
+        stride=stride,
+        padding=1,
+        bias=False)
 
 
 def downsample_basic_block(x, planes, stride):
     out = F.avg_pool3d(x, kernel_size=1, stride=stride)
     zero_pads = torch.Tensor(
-        out.size(0), planes - out.size(1), out.size(2), out.size(3), out.size(4)
-    ).zero_()
+        out.size(0), planes - out.size(1), out.size(2), out.size(3),
+        out.size(4)).zero_()
     if isinstance(out.data, torch.cuda.FloatTensor):
         zero_pads = zero_pads.cuda()
 
@@ -78,8 +75,7 @@ class Bottleneck(nn.Module):
         self.conv1 = nn.Conv3d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm3d(planes)
         self.conv2 = nn.Conv3d(
-            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
-        )
+            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn2 = nn.BatchNorm3d(planes)
         self.conv3 = nn.Conv3d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm3d(planes * 4)
@@ -112,16 +108,14 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(
-        self,
-        block,
-        layers,
-        spatial_size,
-        sample_count,
-        in_classes=2,
-        shortcut_type="B",
-        num_classes=400,
-    ):
+    def __init__(self,
+                 block,
+                 layers,
+                 spatial_size,
+                 sample_count,
+                 in_classes=2,
+                 shortcut_type='B',
+                 num_classes=400):
         self.inplanes = 64
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv3d(
@@ -130,26 +124,29 @@ class ResNet(nn.Module):
             kernel_size=7,
             stride=(1, 2, 2),
             padding=(3, 3, 3),
-            bias=False,
-        )
+            bias=False)
         self.bn1 = nn.BatchNorm3d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=(3, 3, 3), stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0], shortcut_type)
-        self.layer2 = self._make_layer(block, 128, layers[1], shortcut_type, stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], shortcut_type, stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], shortcut_type, stride=2)
+        self.layer2 = self._make_layer(
+            block, 128, layers[1], shortcut_type, stride=2)
+        self.layer3 = self._make_layer(
+            block, 256, layers[2], shortcut_type, stride=2)
+        self.layer4 = self._make_layer(
+            block, 512, layers[3], shortcut_type, stride=2)
         last_count = int(math.ceil(sample_count / 16))
         last_size = int(math.ceil(spatial_size / 32))
-
+        
         self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
         # self.avgpool = nn.AvgPool3d(
         #     (last_count, last_size, last_size), stride=1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+        
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
-                m.weight = nn.init.kaiming_normal_(m.weight, mode="fan_out")
+                m.weight = nn.init.kaiming_normal_(m.weight, mode='fan_out')
             elif isinstance(m, nn.BatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
@@ -157,12 +154,11 @@ class ResNet(nn.Module):
     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            if shortcut_type == "A":
+            if shortcut_type == 'A':
                 downsample = partial(
                     downsample_basic_block,
                     planes=planes * block.expansion,
-                    stride=stride,
-                )
+                    stride=stride)
             else:
                 downsample = nn.Sequential(
                     nn.Conv3d(
@@ -170,10 +166,7 @@ class ResNet(nn.Module):
                         planes * block.expansion,
                         kernel_size=1,
                         stride=stride,
-                        bias=False,
-                    ),
-                    nn.BatchNorm3d(planes * block.expansion),
-                )
+                        bias=False), nn.BatchNorm3d(planes * block.expansion))
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
@@ -202,7 +195,6 @@ class ResNet(nn.Module):
 
         return x
 
-
 ##########################################################################################
 ##########################################################################################
 
@@ -211,30 +203,31 @@ def get_fine_tuning_parameters(model, ft_prefixes):
 
     assert isinstance(ft_prefixes, str)
 
-    if ft_prefixes == "":
-        print("WARNING: training full network because --ft_predixes=None")
+    if ft_prefixes == '':
+        print('WARNING: training full network because --ft_predixes=None')
         return model.parameters()
 
-    print("#" * 60)
-    print("Setting finetuning layer prefixes: {}".format(ft_prefixes))
+    print('#'*60)
+    print('Setting finetuning layer prefixes: {}'.format(ft_prefixes))
 
-    ft_prefixes = ft_prefixes.split(",")
+    ft_prefixes = ft_prefixes.split(',')
     parameters = []
     param_names = []
     for param_name, param in model.named_parameters():
         for prefix in ft_prefixes:
             if prefix in param_name:
-                print("  Finetuning parameter: {}".format(param_name))
-                parameters.append({"params": param, "name": param_name})
+                print('  Finetuning parameter: {}'.format(param_name))
+                parameters.append({'params': param, 'name': param_name})
                 param_names.append(param_name)
 
     for param_name, param in model.named_parameters():
         if param_name not in param_names:
             # This sames a lot of GPU memory...
-            print("disabling gradient for: {}".format(param_name))
+            print('disabling gradient for: {}'.format(param_name))
             param.requires_grad = False
 
     return parameters
+
 
 
 # def get_fine_tuning_parameters(model, ft_begin_index):
@@ -284,59 +277,58 @@ def get_fine_tuning_parameters(model, ft_prefixes):
 ##########################################################################################
 ##########################################################################################
 
-
 def resnet10(**kwargs):
-    """Constructs a ResNet-18 model."""
+    """Constructs a ResNet-18 model.
+    """
     model = ResNet(BasicBlock, [1, 1, 1, 1], **kwargs)
     return model
 
 
 def resnet18(**kwargs):
-    """Constructs a ResNet-18 model."""
+    """Constructs a ResNet-18 model.
+    """
     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
     return model
 
 
 def resnet34(**kwargs):
-    """Constructs a ResNet-34 model."""
+    """Constructs a ResNet-34 model.
+    """
     model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
     return model
 
 
 def resnet50(**kwargs):
-    """Constructs a ResNet-50 model."""
+    """Constructs a ResNet-50 model.
+    """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
 
 
 def resnet101(**kwargs):
-    """Constructs a ResNet-101 model."""
+    """Constructs a ResNet-101 model.
+    """
     model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
     return model
 
 
 def resnet152(**kwargs):
-    """Constructs a ResNet-101 model."""
+    """Constructs a ResNet-101 model.
+    """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     return model
 
 
 def resnet200(**kwargs):
-    """Constructs a ResNet-101 model."""
+    """Constructs a ResNet-101 model.
+    """
     model = ResNet(Bottleneck, [3, 24, 36, 3], **kwargs)
     return model
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = resnet50(
-        in_classes=2,
-        num_classes=1,
-        shortcut_type="B",
-        spatial_size=64,
-        sample_count=128,
-    ).to(device)
+    model = resnet50(in_classes=2, num_classes=1, shortcut_type='B', spatial_size=64,sample_count=128).to(device)
 
     x = torch.randn(2, 2, 128, 128, 64).to(device)
     y = model(x)

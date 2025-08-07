@@ -1,7 +1,3 @@
-import os
-from tkinter import TRUE
-
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import einops
 
 from monai.networks.blocks import Convolution, ResidualUnit
@@ -272,7 +268,7 @@ class SAM_MS(nn.Module):
         droppath = 0.0
         model = timm.create_model(
             model_type,
-            pretrained=True,  # True
+            pretrained=False,  # True
             num_classes=num_classes,
         )
         for name, param in model.named_parameters():
